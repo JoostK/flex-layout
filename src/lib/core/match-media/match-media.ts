@@ -5,7 +5,7 @@
  * Use of this source code is governed by an MIT-style license that can be
  * found in the LICENSE file at https://angular.io/license
  */
-import {Inject, Injectable, NgZone, PLATFORM_ID} from '@angular/core';
+import {Inject, Injectable, NgZone, OnDestroy, PLATFORM_ID} from '@angular/core';
 import {DOCUMENT, isPlatformBrowser} from '@angular/common';
 import {BehaviorSubject, Observable, merge, Observer} from 'rxjs';
 import {filter} from 'rxjs/operators';
@@ -20,10 +20,10 @@ import {MediaChange} from '../media-change';
  * NOTE: both mediaQuery activations and de-activations are announced in notifications
  */
 @Injectable({providedIn: 'root'})
-export class MatchMedia {
+export class MatchMedia implements OnDestroy {
   /** Initialize source with 'all' so all non-responsive APIs trigger style updates */
   readonly source = new BehaviorSubject<MediaChange>(new MediaChange(true));
-  registry = new Map<string, MediaQueryList>();
+  protected _registry = new Map<string, MediaQueryList>();
 
   constructor(protected _zone: NgZone,
               @Inject(PLATFORM_ID) protected _platformId: Object,
@@ -41,6 +41,15 @@ export class MatchMedia {
       }
     });
     return results;
+  }
+
+  get registry(): Map<string, MediaQueryList> {
+    return this._registry;
+  }
+
+  set registry(registry: Map<string, MediaQueryList>) {
+    this.emptyRegistry();
+    this._registry = registry;
   }
 
   /**
@@ -73,9 +82,8 @@ export class MatchMedia {
   observe(mqList?: string[], filterOthers = false): Observable<MediaChange> {
     if (mqList && mqList.length) {
       const matchMedia$: Observable<MediaChange> = this._observable$.pipe(
-          filter((change: MediaChange) => {
-            return !filterOthers ? true : (mqList.indexOf(change.mediaQuery) > -1);
-          })
+          filter((change: MediaChange) =>
+            !filterOthers ? true : (mqList.indexOf(change.mediaQuery) > -1))
       );
       const registration$: Observable<MediaChange> = new Observable((observer: Observer<MediaChange>) => {  // tslint:disable-line:max-line-length
         const matches: Array<MediaChange> = this.registerQuery(mqList);
@@ -114,6 +122,7 @@ export class MatchMedia {
         mql = this.buildMQL(query);
         mql.addListener(onMQLEvent);
         this.registry.set(query, mql);
+        this.listeners.set(query, onMQLEvent);
       }
 
       if (mql.matches) {
@@ -124,12 +133,27 @@ export class MatchMedia {
     return matches;
   }
 
+  protected listeners: Map<string, ((this: MediaQueryList, ev: MediaQueryListEvent) => any)>
+    = new Map();
+
+  ngOnDestroy(): void {
+    this.emptyRegistry();
+  }
+
+  protected emptyRegistry() {
+    this.registry.forEach((l, q) => this.destroyMQL(l, q));
+  }
+
   /**
    * Call window.matchMedia() to build a MediaQueryList; which
    * supports 0..n listeners for activation/deactivation
    */
   protected buildMQL(query: string): MediaQueryList {
     return constructMql(query, isPlatformBrowser(this._platformId));
+  }
+
+  protected destroyMQL(list: MediaQueryList, query: string) {
+    list.removeListener(this.listeners.get(query)!);
   }
 
   protected _observable$ = this.source.asObservable();
@@ -188,6 +212,14 @@ function constructMql(query: string, isBrowser: boolean): MediaQueryList {
     addListener: () => {
     },
     removeListener: () => {
+    },
+    onchange: null,
+    addEventListener() {
+    },
+    removeEventListener() {
+    },
+    dispatchEvent() {
+      return false;
     }
-  } as unknown as MediaQueryList;
+  } as MediaQueryList;
 }
