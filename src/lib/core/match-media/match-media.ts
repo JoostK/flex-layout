@@ -24,6 +24,7 @@ export class MatchMedia implements OnDestroy {
   /** Initialize source with 'all' so all non-responsive APIs trigger style updates */
   readonly source = new BehaviorSubject<MediaChange>(new MediaChange(true));
   protected _registry = new Map<string, MediaQueryList>();
+  private readonly pendingRemoveListenerFns: Array<() => void> = [];
 
   constructor(protected _zone: NgZone,
               @Inject(PLATFORM_ID) protected _platformId: Object,
@@ -48,7 +49,6 @@ export class MatchMedia implements OnDestroy {
   }
 
   set registry(registry: Map<string, MediaQueryList>) {
-    this.emptyRegistry();
     this._registry = registry;
   }
 
@@ -121,8 +121,8 @@ export class MatchMedia implements OnDestroy {
       if (!mql) {
         mql = this.buildMQL(query);
         mql.addListener(onMQLEvent);
+        this.pendingRemoveListenerFns.push(() => mql!.removeListener(onMQLEvent));
         this.registry.set(query, mql);
-        this.listeners.set(query, onMQLEvent);
       }
 
       if (mql.matches) {
@@ -133,15 +133,9 @@ export class MatchMedia implements OnDestroy {
     return matches;
   }
 
-  protected listeners: Map<string, ((this: MediaQueryList, ev: MediaQueryListEvent) => any)>
-    = new Map();
-
   ngOnDestroy(): void {
-    this.emptyRegistry();
-  }
-
-  protected emptyRegistry() {
-    this.registry.forEach((l, q) => this.destroyMQL(l, q));
+    this.pendingRemoveListenerFns.forEach(removeListener => removeListener());
+    this.pendingRemoveListenerFns.length = 0;
   }
 
   /**
@@ -150,10 +144,6 @@ export class MatchMedia implements OnDestroy {
    */
   protected buildMQL(query: string): MediaQueryList {
     return constructMql(query, isPlatformBrowser(this._platformId));
-  }
-
-  protected destroyMQL(list: MediaQueryList, query: string) {
-    list.removeListener(this.listeners.get(query)!);
   }
 
   protected _observable$ = this.source.asObservable();
